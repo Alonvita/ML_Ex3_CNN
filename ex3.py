@@ -21,19 +21,56 @@ activationFuncDerivativs = {"sigmoid": lambda x: x*(1-x),
 
 
 class Cnn(IModel):
-    def __init__(self, hidden_layer_size, input_size, output_size):
+    def __init__(self, func, hidden_layer_size, input_size, output_size):
+        self._using_function = func
+
         self._model_structure = {
-            "Weights1": np.random.uniform(-0.08, 0.08, [hidden_layer_size, input_size])
-            "Bias1": np.random.uniform(-0.08, 0.08, [hidden_layer_size, 1])
-            "Weights2": np.random.uniform(-0.08, 0.08, [output_size, hidden_layer_size])
+            "Layer1": np.random.uniform(-0.08, 0.08, [hidden_layer_size, input_size]),
+            "Bias1": np.random.uniform(-0.08, 0.08, [hidden_layer_size, 1]),
+            "Layer2": np.random.uniform(-0.08, 0.08, [output_size, hidden_layer_size]),
             "Bias2": np.random.uniform(-0.08, 0.08, [output_size, 1])
         }
 
+    def set_function(self, func):
+        self._using_function = func
+
     def predict(self, row):
-        pass
+        x = row[0]
+        y = row[1]
+
+        y_val = int(y)
+
+        x.shape = (784, 1)
+
+        # apply function on first level
+        h1 = self._using_function(
+            np.dot(self._model_structure["Layer1"], x) +
+            self._model_structure["bias1"])
+
+        # calculate output vector
+        output_vector = \
+            self._using_function(
+                np.dot(self._model_structure["Layer2"], h1) +
+                self._model_structure["bias2"])
+
+        # softmax the output vec
+        y_hat = self.__softmax(output_vector)
+
+        loss_sum = -np.log(y_hat[y_val])
+
+        return {
+            "loss": loss_sum,
+            "y_val": y_val,
+            "y_hat": y_hat
+        }
 
     def train(self, row, row_y_values, learn_rate):
         pass
+
+    @staticmethod
+    def __softmax(vector):
+        return np.exp(vector - vector.max()) / \
+               np.exp(vector - vector.max()).sum()
 
 
 class ActivationFunctions:
