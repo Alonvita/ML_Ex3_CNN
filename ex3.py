@@ -20,6 +20,22 @@ activationFuncDerivativs = {"sigmoid": lambda x: x*(1-x),
                       "PreLU" : PreLU_deriv}
 
 
+class Cnn(IModel):
+    def __init__(self, hidden_layer_size, input_size, output_size):
+        self._model_structure = {
+            "Weights1": np.random.uniform(-0.08, 0.08, [hidden_layer_size, input_size])
+            "Bias1": np.random.uniform(-0.08, 0.08, [hidden_layer_size, 1])
+            "Weights2": np.random.uniform(-0.08, 0.08, [output_size, hidden_layer_size])
+            "Bias2": np.random.uniform(-0.08, 0.08, [output_size, 1])
+        }
+
+    def predict(self, row):
+        pass
+
+    def train(self, row, row_y_values, learn_rate):
+        pass
+
+
 class ActivationFunctions:
     _functions_map = dict()
 
@@ -56,7 +72,26 @@ class FitModel:
         self._X = train_x_data
         self._Y = train_y_data
 
-    def fit_model(self, model, epochs, learning_rate, print_results=False):
+        # zip files and shuffle
+        self._shuffled_training_data = shuffle(zip_data(train_x, train_y))
+
+        # split to actual and validation
+        self.__split_to_actual_train_and_validation_data()
+
+    def __split_to_actual_train_and_validation_data(self):
+        train_size = len(self._X)
+        actual_train_size = train_size * (1 - VALIDATION_PORTION)
+
+        self._actual_train_data = self._shuffled_training_data[:actual_train_size:]
+        self._validation_data = self._shuffled_training_data[actual_train_size::]
+
+    def get_actual_data_created(self):
+        return self._actual_train_data
+
+    def get_validation_data_created(self):
+        return self._validation_data
+
+    def fit_model(self, model, epochs, learning_rate, hidden_func_derivative, print_results=False):
         """
         train(model, train_x_data, train_y_values, epochs, learning_rate, verbose=False).
 
@@ -67,9 +102,27 @@ class FitModel:
 
         :return: the best model found
         """
-        # TODO: -- Alon -- ("train")
-        # TODO: -- Alon -- also "forward" function
-        pass
+        for i in range(epochs):
+            loss_per_train = 0.0
+            train_length = len(self._actual_train_data)
+
+            # shuffle actual data
+            shuffle(self._actual_train_data)
+
+            for x in self._actual_train_data:
+                # TODO: finish the forward function
+                forwardVals = forward(x, params, hiddenFunc)
+                lossPerTrain += forwardVals["loss"]
+                soft_deriv = (forwardVals["y_hat"])
+                soft_deriv[forwardVals["yVal"]] -= 1
+                # TODO: finish backProp
+                gradients = backProp(x, soft_deriv, hiddenFuncDeriv, forwardVals, params)
+                params = update_params(params, LR, gradients)
+
+            validation_loss, acc = test_on_validation_Inputs(params, hiddenFunc, validationInputs)
+            print
+            "Epoch number: %d\nAverage train loss: %f\nAverage validation loss: %f\n" % (
+            i, lossPerTrain / sizeOfTrain, validation_loss), "Level of accuracy: {}%\n".format(acc * 100)
 
     def meassure_accuracy(self):
         # TODO: -- borreda --
@@ -148,18 +201,9 @@ def main():
 if __name__ == '__main__':
     train_x, train_y = load_training_data()
 
-    # zip files
-    training_data = zip_data(train_x, train_y)
+    # TODO: create the model HERE
 
-    # shuffle training data
-    shuffle(training_data)
-
-    # split to validation and actual_train_size
-    train_size = len(train_x)
-    validation_size = train_size * VALIDATION_PORTION
-    actual_train_size = train_size * (1 - VALIDATION_PORTION)
-
-    actual_train_inputs = training_data[:actual_train_size:]
-    validation_inputs = training_data[actual_train_size::]
+    # create the FitModel
+    fit_model = FitModel(train_x, train_y)
 
     # TODO: -- Alon -- add test_forward call to here (code above main)
