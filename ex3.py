@@ -21,8 +21,15 @@ activationFuncDerivativs = {"sigmoid": lambda x: x*(1-x),
 
 
 class Cnn(IModel):
-    def __init__(self, func, hidden_layer_size, input_size, output_size):
-        self._using_function = func
+    def __init__(self, hidden_layer_size,
+                 input_size, output_size, funcs_dict,
+                 derivative_funcs_dict):
+        # initialize currently used function and derivative to None
+        self._strategy_func = None
+        self._derivative_strategy_func = None
+
+        self._funcs_dict= funcs_dict
+        self._derivative_funcs_dict = derivative_funcs_dict
 
         self._model_structure = {
             "Layer1": np.random.uniform(-0.08, 0.08, [hidden_layer_size, input_size]),
@@ -31,10 +38,24 @@ class Cnn(IModel):
             "Bias2": np.random.uniform(-0.08, 0.08, [output_size, 1])
         }
 
-    def set_function(self, func):
-        self._using_function = func
+        # reset initialized strategy func and derivative func.
+        self.set_strategy_func(self._funcs_dict["sigmoid"])
+        self.set_derivative_strategy_func(self._derivative_funcs_dict["sigmoid"])
+
+
+    def set_strategy_func(self, func):
+        self._strategy_func = func
+
+    def set_derivative_strategy_func(self, func):
+        self._derivative_strategy_func = func
 
     def predict(self, row):
+        """
+        predict(self, row).
+
+        :param row: data row.
+        :return: a dict containing the desired forward values
+        """
         x = row[0]
         y = row[1]
 
@@ -43,26 +64,36 @@ class Cnn(IModel):
         x.shape = (784, 1)
 
         # apply function on first level
-        h1 = self._using_function(
+        h1 = self._strategy_func(
             np.dot(self._model_structure["Layer1"], x) +
             self._model_structure["bias1"])
 
         # calculate output vector
         output_vector = \
-            self._using_function(
+            self._strategy_func(
                 np.dot(self._model_structure["Layer2"], h1) +
                 self._model_structure["bias2"])
 
         # softmax the output vec
         y_hat = self.__softmax(output_vector)
 
-        loss_sum = -np.log(y_hat[y_val])
+        loss = -np.log(y_hat[y_val])
 
         return {
-            "loss": loss_sum,
+            "h1": h1,
+            "loss": loss,
             "y_val": y_val,
             "y_hat": y_hat
         }
+
+    def back_propegation(self, input, softMax_deriv, last_prediction_values, params):
+        weights2_grad = np.dot(softMax_deriv, last_prediction_values["h1"].T)
+        bias2_grad = softMax_deriv
+        bias1_temp1 = np.dot(params["weights2"].T, softMax_deriv)
+        bias1_grad = bias1_temp1 * \
+                     self._derivative_strategy_func(last_prediction_values["h1"])
+        weights1_grad = np.dot(bias1_grad, input[0].T)
+        return {"w1_grad": weights1_grad, "b1_grad": bias1_grad, "w2_grad": weights2_grad, "b2_grad": bias2_grad}
 
     def train(self, row, row_y_values, learn_rate):
         pass
