@@ -9,27 +9,17 @@ class IModel(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def train(self, row, row_y_values, learn_rate):
+    def update_model(self, gradients, learn_rate):
         raise NotImplementedError
-
-# TODO: -- call me when you start :) --
-# TODO: -- Borreda -- turn this into a class: activationFuncDerivatives
-activationFuncDerivativs = {"sigmoid": lambda x: x*(1-x),
-                      "tanH": lambda x: 4/np.power((np.exp(-x) + np.exp(x)), 2),
-                      "reLU": reLU_Deriv,
-                      "PreLU" : PreLU_deriv}
 
 
 class Cnn(IModel):
     def __init__(self, hidden_layer_size,
-                 input_size, output_size, funcs_dict,
-                 derivative_funcs_dict):
+                 input_size, output_size,
+                 activation_function, activation_derivative):
         # initialize currently used function and derivative to None
         self._strategy_func = None
         self._derivative_strategy_func = None
-
-        self._funcs_dict= funcs_dict
-        self._derivative_funcs_dict = derivative_funcs_dict
 
         self._model_structure = {
             "Layer1": np.random.uniform(-0.08, 0.08, [hidden_layer_size, input_size]),
@@ -38,10 +28,9 @@ class Cnn(IModel):
             "Bias2": np.random.uniform(-0.08, 0.08, [output_size, 1])
         }
 
-        # reset initialized strategy func and derivative func.
-        self.set_strategy_func(self._funcs_dict["sigmoid"])
-        self.set_derivative_strategy_func(self._derivative_funcs_dict["sigmoid"])
-
+        # initialized strategy func and derivative func.
+        self.set_strategy_func(activation_function)
+        self.set_derivative_strategy_func(activation_derivative)
 
     def set_strategy_func(self, func):
         self._strategy_func = func
@@ -54,18 +43,13 @@ class Cnn(IModel):
         predict(self, row).
 
         :param row: data row.
+
         :return: a dict containing the desired forward values
         """
-        x = row[0]
-        y = row[1]
-
-        y_val = int(y)
-
-        x.shape = (784, 1)
 
         # apply function on first level
         h1 = self._strategy_func(
-            np.dot(self._model_structure["Layer1"], x) +
+            np.dot(self._model_structure["Layer1"], row) +
             self._model_structure["bias1"])
 
         # calculate output vector
@@ -74,44 +58,47 @@ class Cnn(IModel):
                 np.dot(self._model_structure["Layer2"], h1) +
                 self._model_structure["bias2"])
 
-        # softmax the output vec
-        y_hat = self.__softmax(output_vector)
+        probabilities_vector = ActivationFunctions.soft_max(output_vector)
 
-        loss = -np.log(y_hat[y_val])
-
+        # return y_hat
         return {
-            "h1": h1,
-            "loss": loss,
-            "y_val": y_val,
-            "y_hat": y_hat
+            probabilities_vector: "prob_vec",
+            h1: "h1"
         }
 
-    def back_propegation(self, input, softMax_deriv, last_prediction_values, params):
-        weights2_grad = np.dot(softMax_deriv, last_prediction_values["h1"].T)
-        bias2_grad = softMax_deriv
-        bias1_temp1 = np.dot(params["weights2"].T, softMax_deriv)
-        bias1_grad = bias1_temp1 * \
-                     self._derivative_strategy_func(last_prediction_values["h1"])
-        weights1_grad = np.dot(bias1_grad, input[0].T)
-        return {"w1_grad": weights1_grad, "b1_grad": bias1_grad, "w2_grad": weights2_grad, "b2_grad": bias2_grad}
+    def back_propagation(self, row, soft_max_derivative, last_prediction_values):
+        layer2_grad = np.dot(soft_max_derivative, last_prediction_values["h1"].T)
+        bias2_grad = soft_max_derivative
 
-    def train(self, row, row_y_values, learn_rate):
-        pass
+        bias1_temp1 = np.dot(self._model_structure["Layer2"].T, soft_max_derivative)
+        bias1_grad = bias1_temp1 * self._derivative_strategy_func(last_prediction_values["h1"])
 
-    @staticmethod
-    def __softmax(vector):
-        return np.exp(vector - vector.max()) / \
-               np.exp(vector - vector.max()).sum()
+        layer1_grad = np.dot(bias1_grad, row.T)
+
+        return {
+            "w1_grad": layer1_grad,
+            "b1_grad": bias1_grad,
+            "w2_grad": layer2_grad,
+            "b2_grad": bias2_grad
+        }
+
+    def update_model(self, gradients, learn_rate):
+        self._model_structure["Layer1"] = \
+            self._model_structure["Layer1"] - learn_rate["Layer1"] * gradients["w1_grad"]
+        self._model_structure["bias1"] = \
+            self._model_structure["bias1"] - learn_rate["bias1"] * gradients["b1_grad"]
+        self._model_structure["weights2"] = \
+            self._model_structure["weights2"] - learn_rate["weights2"] * gradients["w2_grad"]
+        self._model_structure["bias2"] = \
+            self._model_structure["bias2"] - learn_rate["bias2"] * gradients["b2_grad"]
+
+        # return the model structure AFTER the update
+        return self._model_structure
 
 
 class ActivationFunctions:
     _functions_map = dict()
-
-    def __init__(self):
-        self._functions_map["sigmoid"] = self.sigmoid_func
-        self._functions_map["tan_h"] = self.tan_h_func
-        self._functions_map["rel_u"] = self.rel_u
-        self._functions_map["pre_lu"] = self.pre_lu
+    _derivatives_map = dict()
 
     @staticmethod
     def sigmoid_func(x):
@@ -126,7 +113,8 @@ class ActivationFunctions:
         length = len(x)
 
         for i in range(length):
-            if x[i] < 0: x[i] = 0
+            if x[i] < 0:
+                x[i] = 0
 
         return x
 
@@ -134,24 +122,27 @@ class ActivationFunctions:
     def pre_lu(x):
         np.maximum(np.multiply(0.01, x), x)
 
+    @staticmethod
+    def soft_max(vector):
+        shifted_x = np.exp(vector - vector.max())
+        exp_values = np.exp(shifted_x)
+
+        return np.divide(exp_values, np.sum(exp_values))
+
 
 class FitModel:
-    def __init__(self, train_x_data, train_y_data):
-        self._X = train_x_data
-        self._Y = train_y_data
-
+    def __init__(self, train_x_data, train_y_data, validation_portion):
         # zip files and shuffle
-        self._shuffled_training_data = shuffle(zip_data(train_x, train_y))
+        self._shuffled_training_data = shuffle(DataManipulations.zip_data(train_x_data, train_y_data))
 
         # split to actual and validation
-        self.__split_to_actual_train_and_validation_data()
+        self.__split_to_actual_train_and_validation_data(len(train_x_data), validation_portion)
 
-    def __split_to_actual_train_and_validation_data(self):
-        train_size = len(self._X)
-        actual_train_size = train_size * (1 - VALIDATION_PORTION)
+    def __split_to_actual_train_and_validation_data(self, data_length, validation_portion):
+        actual_train_size = int(data_length * (1 - validation_portion))
 
-        self._actual_train_data = self._shuffled_training_data[:actual_train_size:]
-        self._validation_data = self._shuffled_training_data[actual_train_size::]
+        self._actual_train_data = self._shuffled_training_data[:actual_train_size]
+        self._validation_data = self._shuffled_training_data[actual_train_size:]
 
     def get_actual_data_created(self):
         return self._actual_train_data
@@ -159,38 +150,53 @@ class FitModel:
     def get_validation_data_created(self):
         return self._validation_data
 
-    def fit_model(self, model, epochs, learning_rate, hidden_func_derivative, print_results=False):
+    def fit_model(self, model, epochs, learning_rate, debugging=False):
         """
         train(model, train_x_data, train_y_values, epochs, learning_rate, verbose=False).
 
         :param model: a given ModelInterface
         :param epochs: given epochs list
         :param learning_rate: learning rate for the networks
-        :param print_results: true in order to print the results, or false otherwise. False default.
-
-        :return: the best model found
+        :param debugging: true in order to print the results, or false otherwise. False default.
         """
-        for i in range(epochs):
-            loss_per_train = 0.0
-            train_length = len(self._actual_train_data)
+        for epochs in range(epochs):
+            total_loss = 0.0
 
             # shuffle actual data
             shuffle(self._actual_train_data)
 
-            for x in self._actual_train_data:
-                # TODO: finish the forward function
-                forwardVals = forward(x, params, hiddenFunc)
-                lossPerTrain += forwardVals["loss"]
-                soft_deriv = (forwardVals["y_hat"])
-                soft_deriv[forwardVals["yVal"]] -= 1
-                # TODO: finish backProp
-                gradients = backProp(x, soft_deriv, hiddenFuncDeriv, forwardVals, params)
-                params = update_params(params, LR, gradients)
+            model_after_train = None
 
-            validation_loss, acc = test_on_validation_Inputs(params, hiddenFunc, validationInputs)
-            print
-            "Epoch number: %d\nAverage train loss: %f\nAverage validation loss: %f\n" % (
-            i, lossPerTrain / sizeOfTrain, validation_loss), "Level of accuracy: {}%\n".format(acc * 100)
+            train_size = len(self._actual_train_data[0])
+
+            for index in range(train_size):
+                row = self._actual_train_data[0][index]
+                y_val = self._actual_train_data[1][index]
+
+                prediction_dict = model.predict(row.reshape(784, 1))
+
+                # predict for the current, reshaped, row
+                y_hat = prediction_dict["prob_vec"]
+
+                # sum the loss
+                total_loss += - np.log(y_hat[y_val])
+
+                # calculate y_hat
+                y_hat[y_val] -= 1
+
+                # back propagation
+                gradients = model.back_propagation(row, y_hat, prediction_dict)
+
+                # update the model
+                model_after_train = model.update_model(learning_rate, gradients)
+
+            if debugging and model_after_train is not None:
+                validation_loss, acc = \
+                    self.__compare_to_validation(model)
+
+                print(
+                    "Epoch: {}\nAVG train loss: {}\nAVG validation loss: {}\n Accuracy percent: {}\n".format(
+                        epochs, total_loss / train_size, validation_loss, acc * 100))
 
     def meassure_accuracy(self):
         # TODO: -- borreda --
@@ -207,22 +213,26 @@ class FitModel:
         avg_loss = sum_loss / size
         return avg_loss, acc
 
-    # TODO: -- borreda -- add these two to the FitModel class
-    def backProp(input, softMax_deriv, hiddenFunc_deriv, forwardVals, params):
-        weights2_grad = np.dot(softMax_deriv, forwardVals["h1"].T)
-        bias2_grad = softMax_deriv
-        bias1_temp1 = np.dot(params["weights2"].T, softMax_deriv)
-        bias1_grad = bias1_temp1 * hiddenFunc_deriv(forwardVals["h1"])
-        weights1_grad = np.dot(bias1_grad, input[0].T)
-        return {"w1_grad": weights1_grad, "b1_grad": bias1_grad, "w2_grad": weights2_grad, "b2_grad": bias2_grad}
+    def __compare_to_validation(self, model):
+        sum_loss = 0.0
+        hits = 0.0
+        size = len(self._validation_data)
 
-    # updating the params
-    def update_params(params, LR, gradients):
-        params["weights1"] = params["weights1"] - LR["weights1"] * gradients["w1_grad"]
-        params["bias1"] = params["bias1"] - LR["bias1"] * gradients["b1_grad"]
-        params["weights2"] = params["weights2"] - LR["weights2"] * gradients["w2_grad"]
-        params["bias2"] = params["bias2"] - LR["bias2"] * gradients["b2_grad"]
-        return params
+        for index in range(len(self._validation_data)):
+            row = self._validation_data[0]
+            y_val = self._validation_data[1]
+
+            prediction_dict = model.predict(row.reshape(784, 1))
+
+            y_hat = prediction_dict["prob_vec"]
+
+            if y_hat.argmax() == y_val:
+                hits += 1
+
+        acc = hits / size
+        avg_loss = sum_loss / size
+
+        return avg_loss, acc
 
 
 class DataManipulations:
@@ -234,11 +244,19 @@ class DataManipulations:
             print("The file path provided is corrupted, or file does not exist.")
             return list()
 
+    def zip_data(segment_a, segment_b):
+        """
+        zip_data(segment_a, segment_b).
+
+        :param segment_a: segment a of the data to zip
+        :param segment_b: segment b of the data to zip
+        :return: zip of the segments
+        """
+        return zip(segment_a, segment_b)
+
 
 TRAIN_X_FP = "train_x"
 TRAIN_Y_FP = "train_y"
-
-VALIDATION_PORTION = 1/5
 
 
 def load_training_data():
@@ -250,28 +268,20 @@ def load_training_data():
     return DataManipulations.load_text(TRAIN_X_FP), DataManipulations.load_text(TRAIN_Y_FP)
 
 
-def zip_data(segment_a, segment_b):
-    """
-    zip_data(segment_a, segment_b).
-
-    :param segment_a: segment a of the data to zip
-    :param segment_b: segment b of the data to zip
-    :return: zip of the segments
-    """
-    return zip(segment_a, segment_b)
-
-
-def main():
-    # TODO: -- Alon -- add the main...
-    pass
+OUTPUT_SIZE = 10
+INPUT_SIZE = pow(28, 2)
+HIDDEN_LAYER_SIZE = 100
+VALIDATION_PORTION = 1/5
 
 
 if __name__ == '__main__':
     train_x, train_y = load_training_data()
 
-    # TODO: create the model HERE
+    cnn_model = Cnn(HIDDEN_LAYER_SIZE,
+                    len(train_x), OUTPUT_SIZE,
+                    ActivationFunctions.sigmoid_func,
+                    ActivationFunctions.sigmoid_derivative)
 
     # create the FitModel
-    fit_model = FitModel(train_x, train_y)
+    fit_model = FitModel(train_x, train_y, VALIDATION_PORTION)
 
-    # TODO: -- Alon -- add test_forward call to here (code above main)
